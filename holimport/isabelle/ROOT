@@ -1,0 +1,4 @@
+session New_Import = HOL +
+  description {* New Importer *}
+  theories HOL_Light_Maps
+  theories [condition = HOL_LIGHT_BUNDLE] HOL_Light_Import

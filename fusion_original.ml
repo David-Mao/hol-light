@@ -9,18 +9,6 @@
 
 needs "lib.ml";;
 
-#load "unix.cma";;
-let poutc = open_out "proof.txt";;
-let foutc = open_out "facts.lst";;
-let stop_recording () = close_out poutc; close_out foutc;;
-
-let rec outl = function
-  [] -> ()
-| (h :: t) -> try
-    output_string poutc h; List.fold_left
-      (fun () e -> output_char poutc ' '; output_string poutc e) () t
-    with Sys_error _ -> ();;
-
 module type Hol_kernel =
   sig
       type hol_type = private
@@ -113,166 +101,7 @@ module Hol : Hol_kernel = struct
             | Comb of term * term
             | Abs of term * term
 
-  type thm = Sequent of (term list * term * int)
-
-(* PROOFRECORDING BEGIN *)
-let thms = Hashtbl.create 20000;;
-
-let inc = open_in "theorems";;
-let l = ((input_value inc) : ((string * (term list * term)) list));;
-close_in inc;;
-List.iter (fun (n,t) -> Hashtbl.replace thms t (n, 0)) l;;
-print_endline ("Read in: " ^ string_of_int (Hashtbl.length thms));;
-
-module Fm = Map.Make(struct type t = float let compare = compare end);;
-module Tys = Map.Make(struct type t = hol_type let compare = compare end);;
-module Tms = Map.Make(struct type t = term let compare = compare end);;
-module Ps = Map.Make(struct type t = (term list * term) let compare = compare end);;
-
-let ty_no = ref 0;;
-let tys = ref Tys.empty;;
-
-let rec out_type ty =
-  try
-    Tys.find ty !tys
-  with Not_found ->
-    match ty with
-      Tyvar t ->
-        incr ty_no; tys := Tys.add ty !ty_no !tys;
-        output_char poutc 't'; output_string poutc t; output_char poutc '\n';
-        !ty_no
-    | Tyapp (id, tl) ->
-        let tln = map out_type tl in
-        incr ty_no; tys := Tys.add ty !ty_no !tys;
-        output_char poutc 'a'; output_string poutc id; output_char poutc ' ';
-          outl (map string_of_int tln); output_char poutc '\n';
-        !ty_no;;
-
-let tm_no = ref 0;;
-let tms = ref Tms.empty;;
-let tms_prio = ref Fm.empty;;
-let tms_size = ref 0;;
-let tms_maxsize = ref
-	  (try int_of_string(Sys.getenv "MAXTMS") with Not_found -> 16777216);;
-let tm_lookup tm =
-  let (ret, oldtime) = Tms.find tm !tms in
-  let newtime = Unix.gettimeofday () in
-  tms := Tms.add tm (ret, newtime) !tms;
-  tms_prio := Fm.add newtime tm (Fm.remove oldtime !tms_prio);
-  ret;;
-let tm_delete () =
-  let (time, tm) = Fm.min_binding !tms_prio in
-  tms := Tms.remove tm !tms;
-  tms_prio := Fm.remove time !tms_prio;
-  decr tms_size; ();;
-
-let tm_add tm no =
-  while (!tms_size > !tms_maxsize) do tm_delete (); done;
-  let newtime = Unix.gettimeofday () in
-  tms := Tms.add tm (no, newtime) (!tms);
-  tms_prio := Fm.add newtime tm (!tms_prio);
-  incr tms_size; ();;
-
-let rec out_term tm =
-  try
-    tm_lookup tm
-  with Not_found ->
-    let outc = output_char poutc and out = output_string poutc in
-    match tm with
-      Var (name, ty) ->
-        let ty = out_type ty in
-        incr tm_no; tm_add tm !tm_no;
-        outc 'v'; out name; outc ' '; out (string_of_int ty); outc '\n';
-        !tm_no
-    | Const (name, ty) ->
-        let ty = out_type ty in
-        incr tm_no; tm_add tm !tm_no;
-        outc 'c'; out name; outc ' '; out (string_of_int ty); outc '\n';
-        !tm_no
-    | Comb (f, a) ->
-        let f = out_term f and a = out_term a in
-        incr tm_no; tm_add tm !tm_no;
-        outc 'f'; out (string_of_int f); outc ' '; out (string_of_int a); outc '\n';
-        !tm_no
-    | Abs (x, a) ->
-        let x = out_term x and a = out_term a in
-        incr tm_no; tm_add tm !tm_no;
-        outc 'l'; out (string_of_int x); outc ' '; out (string_of_int a); outc '\n';
-        !tm_no
-;;
-
-let prf_no = ref 0;;
-let outt tag ss tys tms pfs =
-  let tys = map out_type tys and
-      tms = map out_term tms in
-  try
-    output_char poutc tag;
-    outl (ss @ (map string_of_int tys)
-           @ (map string_of_int tms)
-           @ (map string_of_int pfs));
-    output_char poutc '\n'
-  with Sys_error _ -> ()
-;;
-
-let ps = ref Ps.empty;;
-
-let p_lookup p = Ps.find p !ps;;
-let p_add p no = ps := Ps.singleton p no;;
-
-let mk_prff f = incr prf_no; f (); !prf_no;;
-
-let chk_mk_prff f th =
-  try p_lookup th
-  with Not_found ->
-  try
-    let (name, i) = Hashtbl.find thms th in
-    if i > 0 then i else
-    let i = mk_prff f in
-    (ps := Ps.empty;
-    Hashtbl.replace thms th (name, i);
-    (try output_string foutc (name ^ " " ^ string_of_int i ^ "\n"); flush foutc with Sys_error _ -> ());
-    i)
-  with Not_found ->
-    mk_prff (fun () -> f (); p_add th !prf_no);;
-
-
-let mk_prf t l1 l2 l3 l4 _ = mk_prff (fun () -> outt t l1 l2 l3 l4);;
-let chk_mk_prf t l1 l2 l3 l4 th = chk_mk_prff (fun () -> outt t l1 l2 l3 l4) th;;
-let proof_REFL t th = chk_mk_prf 'R' [] [] [t] [] th;;
-let proof_TRANS (p, q) th = chk_mk_prf 'T' [] [] [] [p; q] th;;
-let proof_MK_COMB (p, q) th = chk_mk_prf 'C' [] [] [] [p; q] th;;
-let proof_ABS x p th = chk_mk_prf 'L' [] [] [x] [p] th;;
-let proof_BETA t th = chk_mk_prf 'B' [] [] [t] [] th;;
-let proof_ASSUME t th = chk_mk_prf 'H' [] [] [t] [] th;;
-let proof_EQ_MP p q th = chk_mk_prf 'E' [] [] [] [p; q] th;;
-let proof_DEDUCT_ANTISYM_RULE (p1,t1) (p2,t2) th =
-  chk_mk_prf 'D' [] [] [] [p1; p2] th;;
-let rec explode_subst = function
-  [] -> []
-| ((y,x)::rest) -> x::y::(explode_subst rest);;
-let proof_INST_TYPE s p th = chk_mk_prf 'Q' [] (explode_subst s) [] [p] th;;
-let proof_INST s p th = chk_mk_prf 'S' [] [] (explode_subst s) [p] th;;
-
-let global_ax_counter = ref 0;;
-let new_axiom_name n = incr global_ax_counter; ("ax_" ^ n ^ "_" ^ string_of_int(!global_ax_counter));;
-let proof_new_axiom axname t th = chk_mk_prf 'A' [axname] [] [t] [] th;;
-let proof_new_definition cname t th =
-  chk_mk_prf 'F' [cname] [] [t] [] th;;
-let proof_new_basic_type_definition tyname (absname, repname) (pt,tt) p th =
-  chk_mk_prf 'Y' [tyname; absname; repname] [] [pt; tt] [p] th;;
-let proof_CONJUNCT1 p th = chk_mk_prf '1' [] [] [] [p] th;;
-let proof_CONJUNCT2 p th = chk_mk_prf '2' [] [] [] [p] th;;
-
-let clean_ts_at_saved = ((try Sys.getenv "CLEANTMS" with _ -> "") = "YES");;
-
-let save_proof name p th =
-  Hashtbl.replace thms th (name, p);
-  ps := Ps.empty;
-  if clean_ts_at_saved then (
-    tms := Tms.empty; tms_prio := Fm.empty; tms_size := 0;
-   );
-  (try output_string foutc (name ^ " " ^ string_of_int p ^ "\n"); flush foutc with Sys_error _ -> ());;
-(* PROOFRECORDING END *)
+  type thm = Sequent of (term list * term)
 
 (* ------------------------------------------------------------------------- *)
 (* List of current type constants with their arities.                        *)
@@ -656,48 +485,43 @@ let save_proof name p th =
 (* Basic theorem destructors.                                                *)
 (* ------------------------------------------------------------------------- *)
 
-  let dest_thm (Sequent(asl,c,_)) = (asl,c)
+  let dest_thm (Sequent(asl,c)) = (asl,c)
 
-  let hyp (Sequent(asl,c,_)) = asl
+  let hyp (Sequent(asl,c)) = asl
 
-  let concl (Sequent(asl,c,_)) = c
+  let concl (Sequent(asl,c)) = c
 
 (* ------------------------------------------------------------------------- *)
 (* Basic equality properties; TRANS is derivable but included for efficiency *)
 (* ------------------------------------------------------------------------- *)
 
   let REFL tm =
-    let eq = safe_mk_eq tm tm in
-    Sequent([],eq,proof_REFL tm ([], eq))
+    Sequent([],safe_mk_eq tm tm)
 
-  let TRANS(Sequent(asl1,c1,p1)) (Sequent(asl2,c2,p2)) =
+  let TRANS (Sequent(asl1,c1)) (Sequent(asl2,c2)) =
     match (c1,c2) with
       Comb((Comb(Const("=",_),_) as eql),m1),Comb(Comb(Const("=",_),m2),r)
-        when alphaorder m1 m2 = 0 ->
-          let (a, g) = (term_union asl1 asl2,Comb(eql,r)) in
-          Sequent (a, g, proof_TRANS (p1, p2) (a, g))
+        when alphaorder m1 m2 = 0 -> Sequent(term_union asl1 asl2,Comb(eql,r))
     | _ -> failwith "TRANS"
 
 (* ------------------------------------------------------------------------- *)
 (* Congruence properties of equality.                                        *)
 (* ------------------------------------------------------------------------- *)
 
-  let MK_COMB(Sequent(asl1,c1,p1),Sequent(asl2,c2,p2)) =
+  let MK_COMB(Sequent(asl1,c1),Sequent(asl2,c2)) =
      match (c1,c2) with
        Comb(Comb(Const("=",_),l1),r1),Comb(Comb(Const("=",_),l2),r2) ->
         (match type_of r1 with
            Tyapp("fun",[ty;_]) when Pervasives.compare ty (type_of r2) = 0
-             -> let (a, g) = (term_union asl1 asl2,
-                        safe_mk_eq (Comb(l1,l2)) (Comb(r1,r2))) in
-                          Sequent (a, g, proof_MK_COMB (p1, p2) (a,g))
+             -> Sequent(term_union asl1 asl2,
+                        safe_mk_eq (Comb(l1,l2)) (Comb(r1,r2)))
          | _ -> failwith "MK_COMB: types do not agree")
      | _ -> failwith "MK_COMB: not both equations"
 
-  let ABS v (Sequent(asl,c,p)) =
+  let ABS v (Sequent(asl,c)) =
     match (v,c) with
       Var(_,_),Comb(Comb(Const("=",_),l),r) when not(exists (vfree_in v) asl)
-         -> let eq = safe_mk_eq (Abs(v,l)) (Abs(v,r)) in
-         Sequent (asl,eq,proof_ABS v p (asl,eq))
+         -> Sequent(asl,safe_mk_eq (Abs(v,l)) (Abs(v,r)))
     | _ -> failwith "ABS";;
 
 (* ------------------------------------------------------------------------- *)
@@ -707,8 +531,7 @@ let save_proof name p th =
   let BETA tm =
     match tm with
       Comb(Abs(v,bod),arg) when Pervasives.compare arg v = 0
-        -> let eq = safe_mk_eq tm bod in
-        Sequent([],eq,proof_BETA tm ([], eq))
+        -> Sequent([],safe_mk_eq tm bod)
     | _ -> failwith "BETA: not a trivial beta-redex"
 
 (* ------------------------------------------------------------------------- *)
@@ -716,35 +539,30 @@ let save_proof name p th =
 (* ------------------------------------------------------------------------- *)
 
   let ASSUME tm =
-    if Pervasives.compare (type_of tm) bool_ty = 0 then
-      Sequent([tm],tm,proof_ASSUME tm ([tm], tm))
+    if Pervasives.compare (type_of tm) bool_ty = 0 then Sequent([tm],tm)
     else failwith "ASSUME: not a proposition"
 
-  let EQ_MP (Sequent(asl1,eq,p1)) (Sequent(asl2,c,p2)) =
+  let EQ_MP (Sequent(asl1,eq)) (Sequent(asl2,c)) =
     match eq with
       Comb(Comb(Const("=",_),l),r) when alphaorder l c = 0
-        -> let t = term_union asl1 asl2 in
-        Sequent(t,r,proof_EQ_MP p1 p2 (t,r))
+        -> Sequent(term_union asl1 asl2,r)
     | _ -> failwith "EQ_MP"
 
-  let DEDUCT_ANTISYM_RULE (Sequent(asl1,c1,p1)) (Sequent(asl2,c2,p2)) =
+  let DEDUCT_ANTISYM_RULE (Sequent(asl1,c1)) (Sequent(asl2,c2)) =
     let asl1' = term_remove c2 asl1 and asl2' = term_remove c1 asl2 in
-    let (a,g) = (term_union asl1' asl2',safe_mk_eq c1 c2) in
-    Sequent (a, g, proof_DEDUCT_ANTISYM_RULE (p1,c1) (p2,c2) (a, g))
+    Sequent(term_union asl1' asl2',safe_mk_eq c1 c2)
 
 (* ------------------------------------------------------------------------- *)
 (* Type and term instantiation.                                              *)
 (* ------------------------------------------------------------------------- *)
 
-  let INST_TYPE theta (Sequent(asl,c,p)) =
+  let INST_TYPE theta (Sequent(asl,c)) =
     let inst_fn = inst theta in
-    let (a, g) = (term_image inst_fn asl,inst_fn c) in
-    Sequent(a,g, proof_INST_TYPE theta p (a,g))
+    Sequent(term_image inst_fn asl,inst_fn c)
 
-  let INST theta (Sequent(asl,c,p)) =
+  let INST theta (Sequent(asl,c)) =
     let inst_fun = vsubst theta in
-    let (a, g) = (term_image inst_fun asl,inst_fun c) in
-    Sequent(a, g, proof_INST theta p (a,g))
+    Sequent(term_image inst_fun asl,inst_fun c)
 
 (* ------------------------------------------------------------------------- *)
 (* Handling of axioms.                                                       *)
@@ -756,11 +574,8 @@ let save_proof name p th =
 
   let new_axiom tm =
     if Pervasives.compare (type_of tm) bool_ty = 0 then
-      let axname = new_axiom_name "" in
-      let p = proof_new_axiom axname tm ([], tm) in
-      let th = Sequent([],tm,p) in
-       (the_axioms := th::(!the_axioms);
-        save_proof axname p ([], tm); th)
+      let th = Sequent([],tm) in
+       (the_axioms := th::(!the_axioms); th)
     else failwith "new_axiom: Not a proposition"
 
 (* ------------------------------------------------------------------------- *)
@@ -778,10 +593,7 @@ let save_proof name p th =
         else if not (subset (type_vars_in_term r) (tyvars ty))
         then failwith "new_definition: Type variables not reflected in constant"
         else let c = new_constant(cname,ty); Const(cname,ty) in
-             let concl = safe_mk_eq c r in
-             let p = proof_new_definition cname r ([], concl) in
-             let dth = Sequent([],concl, p) in
-             save_proof ("DEF_"^cname) p ([], concl);
+             let dth = Sequent([],safe_mk_eq c r) in
              the_definitions := dth::(!the_definitions); dth
     | _ -> failwith "new_basic_definition"
 
@@ -798,7 +610,7 @@ let save_proof name p th =
 (* Where "abs" and "rep" are new constants with the nominated names.         *)
 (* ------------------------------------------------------------------------- *)
 
-  let new_basic_type_definition tyname (absname,repname) (Sequent(asl,c,p)) =
+  let new_basic_type_definition tyname (absname,repname) (Sequent(asl,c)) =
     if exists (can get_const_type) [absname; repname] then
       failwith "new_basic_type_definition: Constant(s) already in use" else
     if not (asl = []) then
@@ -818,19 +630,9 @@ let save_proof name p th =
     let abs = (new_constant(absname,absty); Const(absname,absty))
     and rep = (new_constant(repname,repty); Const(repname,repty)) in
     let a = Var("a",aty) and r = Var("r",rty) in
-    let ax1 = safe_mk_eq (Comb(abs,mk_comb(rep,a))) a
-    and ax2 = safe_mk_eq (Comb(P,r)) (safe_mk_eq (mk_comb(rep,mk_comb(abs,r))) r) in
-    let mk_binary s =
-      let c = mk_const(s,[]) in
-      fun (l,r) -> try mk_comb(mk_comb(c,l),r)
-        with Failure _ -> failwith "tydef_mk_binary"
-    in
-    let axc = mk_binary "/\\" (ax1, ax2) in
-    let tp = proof_new_basic_type_definition tyname (absname, repname) (P,x) p ([], axc) in
-    let p1 = proof_CONJUNCT1 tp ([], ax1) in
-    let p2 = proof_CONJUNCT2 tp ([], ax2) in
-    save_proof ("TYDEF_" ^ tyname) tp ([], axc);
-    (Sequent([],ax1,p1), Sequent([],ax2,p2));;
+    Sequent([],safe_mk_eq (Comb(abs,mk_comb(rep,a))) a),
+    Sequent([],safe_mk_eq (Comb(P,r))
+                          (safe_mk_eq (mk_comb(rep,mk_comb(abs,r))) r))
 
 end;;
 

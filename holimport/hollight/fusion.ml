@@ -10,7 +10,7 @@
 needs "lib.ml";;
 
 #load "unix.cma";;
-let poutc = open_out "proof.txt";;
+let poutc = Unix.open_process_out "buffer | gzip -c > proofs.gz";;
 let foutc = open_out "facts.lst";;
 let stop_recording () = close_out poutc; close_out foutc;;
 
@@ -114,7 +114,6 @@ module Hol : Hol_kernel = struct
             | Abs of term * term
 
   type thm = Sequent of (term list * term * int)
-
 (* PROOFRECORDING BEGIN *)
 let thms = Hashtbl.create 20000;;
 
@@ -152,14 +151,14 @@ let tm_no = ref 0;;
 let tms = ref Tms.empty;;
 let tms_prio = ref Fm.empty;;
 let tms_size = ref 0;;
-let tms_maxsize = ref
-	  (try int_of_string(Sys.getenv "MAXTMS") with Not_found -> 16777216);;
+let tms_maxsize = ref (int_of_string (Sys.getenv "MAXTMS"));;
 let tm_lookup tm =
   let (ret, oldtime) = Tms.find tm !tms in
   let newtime = Unix.gettimeofday () in
   tms := Tms.add tm (ret, newtime) !tms;
   tms_prio := Fm.add newtime tm (Fm.remove oldtime !tms_prio);
   ret;;
+
 let tm_delete () =
   let (time, tm) = Fm.min_binding !tms_prio in
   tms := Tms.remove tm !tms;
@@ -406,7 +405,7 @@ let save_proof name p th =
     match tm with
       Var(_,ty) -> ty
     | Const(_,ty) -> ty
-    | Comb(s,_) -> (match type_of s with Tyapp("fun",[dty;rty]) -> rty)
+    | Comb(s,_) -> hd(tl(snd(dest_type(type_of s))))
     | Abs(Var(_,ty),t) -> Tyapp("fun",[ty;type_of t])
 
 (* ------------------------------------------------------------------------- *)
@@ -481,7 +480,7 @@ let save_proof name p th =
       Var(_,_) -> mem tm acc
     | Const(_,_) -> true
     | Abs(bv,bod) -> freesin (bv::acc) bod
-    | Comb(s,t) -> freesin acc s && freesin acc t
+    | Comb(s,t) -> freesin acc s & freesin acc t
 
 (* ------------------------------------------------------------------------- *)
 (* Whether a variable (or constant in fact) is free in a term.               *)
@@ -489,8 +488,8 @@ let save_proof name p th =
 
   let rec vfree_in v tm =
     match tm with
-      Abs(bv,bod) -> v <> bv && vfree_in v bod
-    | Comb(s,t) -> vfree_in v s || vfree_in v t
+      Abs(bv,bod) -> v <> bv & vfree_in v bod
+    | Comb(s,t) -> vfree_in v s or vfree_in v t
     | _ -> Pervasives.compare tm v = 0
 
 (* ------------------------------------------------------------------------- *)
@@ -524,19 +523,18 @@ let save_proof name p th =
         Var(_,_) -> rev_assocd tm ilist tm
       | Const(_,_) -> tm
       | Comb(s,t) -> let s' = vsubst ilist s and t' = vsubst ilist t in
-                     if s' == s && t' == t then tm else Comb(s',t')
+                     if s' == s & t' == t then tm else Comb(s',t')
       | Abs(v,s) -> let ilist' = filter (fun (t,x) -> x <> v) ilist in
                     if ilist' = [] then tm else
                     let s' = vsubst ilist' s in
                     if s' == s then tm else
-                    if exists (fun (t,x) -> vfree_in v t && vfree_in x s) ilist'
+                    if exists (fun (t,x) -> vfree_in v t & vfree_in x s) ilist'
                     then let v' = variant [s'] v in
                          Abs(v',vsubst ((v',v)::ilist') s)
                     else Abs(v,s') in
     fun theta ->
       if theta = [] then (fun tm -> tm) else
-      if forall (function (t,Var(_,y)) -> Pervasives.compare (type_of t) y = 0
-                        | _ -> false) theta
+      if forall (fun (t,x) -> type_of t = snd(dest_var x)) theta
       then vsubst theta else failwith "vsubst: Bad substitution list"
 
 (* ------------------------------------------------------------------------- *)
@@ -556,11 +554,11 @@ let save_proof name p th =
       | Const(c,ty) -> let ty' = type_subst tyin ty in
                        if ty' == ty then tm else Const(c,ty')
       | Comb(f,x)   -> let f' = inst env tyin f and x' = inst env tyin x in
-                       if f' == f && x' == x then tm else Comb(f',x')
+                       if f' == f & x' == x then tm else Comb(f',x')
       | Abs(y,t)    -> let y' = inst [] tyin y in
                        let env' = (y,y')::env in
                        try let t' = inst env' tyin t in
-                           if y' == y && t' == t then tm else Abs(y',t')
+                           if y' == y & t' == t then tm else Abs(y',t')
                        with (Clash(w') as ex) ->
                        if w' <> y' then raise ex else
                        let ifrees = map (inst [] tyin) (frees t) in
@@ -610,7 +608,7 @@ let save_proof name p th =
                        else ordav oenv x1 x2
 
   let rec orda env tm1 tm2 =
-    if tm1 == tm2 && forall (fun (x,y) -> x = y) env then 0 else
+    if tm1 == tm2 & forall (fun (x,y) -> x = y) env then 0 else
     match (tm1,tm2) with
       Var(x1,ty1),Var(x2,ty2) -> ordav env tm1 tm2
     | Const(x1,ty1),Const(x2,ty2) -> Pervasives.compare tm1 tm2
@@ -649,7 +647,7 @@ let save_proof name p th =
   let rec term_image f l =
     match l with
       h::t -> let h' = f h and t' = term_image f t in
-              if h' == h && t' == t then l else term_union [h'] t'
+              if h' == h & t' == t then l else term_union [h'] t'
     | [] -> l
 
 (* ------------------------------------------------------------------------- *)
@@ -670,7 +668,7 @@ let save_proof name p th =
     let eq = safe_mk_eq tm tm in
     Sequent([],eq,proof_REFL tm ([], eq))
 
-  let TRANS(Sequent(asl1,c1,p1)) (Sequent(asl2,c2,p2)) =
+  let TRANS (Sequent(asl1,c1,p1)) (Sequent(asl2,c2,p2)) =
     match (c1,c2) with
       Comb((Comb(Const("=",_),_) as eql),m1),Comb(Comb(Const("=",_),m2),r)
         when alphaorder m1 m2 = 0 ->
@@ -685,11 +683,11 @@ let save_proof name p th =
   let MK_COMB(Sequent(asl1,c1,p1),Sequent(asl2,c2,p2)) =
      match (c1,c2) with
        Comb(Comb(Const("=",_),l1),r1),Comb(Comb(Const("=",_),l2),r2) ->
-        (match type_of r1 with
-           Tyapp("fun",[ty;_]) when Pervasives.compare ty (type_of r2) = 0
+        (match type_of l1 with
+           Tyapp("fun",[ty;_]) when Pervasives.compare ty (type_of l2) = 0
              -> let (a, g) = (term_union asl1 asl2,
                         safe_mk_eq (Comb(l1,l2)) (Comb(r1,r2))) in
-                          Sequent (a, g, proof_MK_COMB (p1, p2) (a,g))
+                Sequent (a, g, proof_MK_COMB (p1, p2) (a,g))
          | _ -> failwith "MK_COMB: types do not agree")
      | _ -> failwith "MK_COMB: not both equations"
 
@@ -697,7 +695,7 @@ let save_proof name p th =
     match (v,c) with
       Var(_,_),Comb(Comb(Const("=",_),l),r) when not(exists (vfree_in v) asl)
          -> let eq = safe_mk_eq (Abs(v,l)) (Abs(v,r)) in
-         Sequent (asl,eq,proof_ABS v p (asl,eq))
+            Sequent (asl,eq,proof_ABS v p (asl,eq))
     | _ -> failwith "ABS";;
 
 (* ------------------------------------------------------------------------- *)
@@ -708,7 +706,7 @@ let save_proof name p th =
     match tm with
       Comb(Abs(v,bod),arg) when Pervasives.compare arg v = 0
         -> let eq = safe_mk_eq tm bod in
-        Sequent([],eq,proof_BETA tm ([], eq))
+           Sequent([],eq,proof_BETA tm ([], eq))
     | _ -> failwith "BETA: not a trivial beta-redex"
 
 (* ------------------------------------------------------------------------- *)
@@ -724,7 +722,7 @@ let save_proof name p th =
     match eq with
       Comb(Comb(Const("=",_),l),r) when alphaorder l c = 0
         -> let t = term_union asl1 asl2 in
-        Sequent(t,r,proof_EQ_MP p1 p2 (t,r))
+           Sequent(t,r,proof_EQ_MP p1 p2 (t,r))
     | _ -> failwith "EQ_MP"
 
   let DEDUCT_ANTISYM_RULE (Sequent(asl1,c1,p1)) (Sequent(asl2,c2,p2)) =
@@ -823,7 +821,7 @@ let save_proof name p th =
     let mk_binary s =
       let c = mk_const(s,[]) in
       fun (l,r) -> try mk_comb(mk_comb(c,l),r)
-        with Failure _ -> failwith "tydef_mk_binary"
+                   with Failure _ -> failwith "tydef_mk_binary"
     in
     let axc = mk_binary "/\\" (ax1, ax2) in
     let tp = proof_new_basic_type_definition tyname (absname, repname) (P,x) p ([], axc) in

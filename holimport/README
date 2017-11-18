@@ -1,0 +1,40 @@
+Get HOLLight.
+  Version SVN r178 from 2013-11-25 is known to work.
+
+Run 'make' to ensure that the camlp5 parser is built.
+
+Copy 'statements.ml' to the HOL-light directory and run hol light to record the statments with
+the following commands:
+  ocaml
+  #use "hol.ml";;
+  #use "update_database.ml";;
+  #use "statements.ml";;
+  dump_theorems ();;
+  exit 0;;
+
+Copy 'fusion.ml' over the one in HOL-Light directory and run hol-light as usual to record the trace:
+  ocaml
+  #use "hol.ml";;
+  stop_recording ();;
+  exit 0;;
+
+You should have 'facts.lst' and 'proofs' that give you the unoptimized trace!
+
+Now you can optionally build the optimized trace.
+  (remove unused theorems, terms, types and mark last occurrences of each object).
+
+Compile and run 'offline/offline.ml' (warning, this uses a lot of memory)
+  ocamlopt offline.ml -o offline
+  > maps.lst
+  ./offline
+
+You now have the optimized 'proofsN'!
+
+If you want to map some constants and theorems in your input you may use a non-empty 'maps.lst'
+
+Format of maps:
+  - THM THM2    map hol thm THM to isa thm THM2 and forget its deps
+  - THM -       do not record thm and make sure it is not used (its deps must be mapped)
+  - THM         the definition of constant/type is mapped in isa, so forget
+                its deps and look its map up when defining (may fail at import time)
+

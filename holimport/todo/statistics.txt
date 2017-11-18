@@ -1,0 +1,121 @@
+MAXTMS  MAXPS  HOL  MONSTER  SIZE
+ 2000   2000   149   2156  37532100
+ 6000   2000   148    128   1834801
+10000   2000   150    119   1671893
+20000   2000   153    122   1625471
+60000   2000   157    123   1587866
+
+10000      -   129    123   4520666
+10000      0   126    118   3870672 (checked twice +- 1s)
+10000      1   131    123   3799879
+10000      2   132    126   3770880
+10000      3   133    127   3743237
+10000      5   137    131   3713384
+10000     20   146    131   3204956
+10000     50   145    136   2922741
+10000    100   148    128   2511220
+10000    150   147    116   2107802
+10000    200   147    109   1977581
+10000    250   145    108   1909325
+10000    300   149    111   1862894
+10000   2000   150    119   1671893
+10000  20000   155    142   1604456
+
+ 7000      0   127    120   3923593
+ 8000      0   124    115   3899838
+ 9000      0   128    116   3882158
+10000      0   126    118   3870672
+Proof steps computed again:
+  2515531 Unique: 187164 Out of 8995179
+Repeated steps:
+  grep -c D   4033
+  grep -c H   39806
+  grep -c L   4
+  grep -c Q   4129
+  grep -c R   101801
+  grep -c S   37389
+  grep -c T   2
+
+Terms/Types: 1118063
+  Unique THMs                 2611323
+
+Steps used later immediately: 2050960
+
+Full share:
+
+# Ps.fold (fun _ _ n -> n + 1) !ps 0;;
+val it : int = 67125890
+# Tys.fold (fun _ _ n -> n + 1) !tys 0;;
+val it : int = 147735
+# Tms.fold (fun _ _ n -> n + 1) !tms 0;;
+val it : int = 35712815
+
+Ps.fold (fun _ m n -> max m n) !ps 0;;
+
+[cek@colo6-c703 export-experiments]$ ./statera
+86632500
+f
+78244359
+i
+4560108
+
+Plain:
+# Ps.fold (fun _ _ n -> n + 1) !ps 0;;
+val it : int = 1887670
+# Ps.fold (fun _ m n -> max m n) !ps 0;;
+val it : proof = 1887669
+
+Which proofs are the ones recomputed, and which are done most often.
+First with REFL, BETA, ASSUME, SUBST, TYINST then without
+  (sort -n; uniq -n; sort -n)
+
+WHOLE Flyspeck:
+
+[cek@colo6-c703 export-experiments]$ ./statera
+13567thms: 67127446 tms: 33547493 tys: 147735
+Direct uses: th->th th->tm tm->tm th->ty tm->ty ty->ty:
+57731944 17791279 26427248 26486 121819 76424
+After removing:
+Depends: th->th th->tm tm->tm th->ty tm->ty ty->ty:
+22933904 5138160 7813158 17445 83334 55884
+cCthms: 22933903 tms: 9092424 tys: 102474
+
+Import: 235min 518MB memory final, 3.1GB on the way
+
+With cleaning after every thm:
+
+thms: 109577822 tms: 36469859 tys: 145160
+Direct uses: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+95947195 18903566 28989284 27824 118376 71543
+After removing:
+Depends: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+31618724 5724980 8663194 19471 88370 57169
+cCthms: 31618723 tms: 9977167 tys: 109987
+
+ 20.July
+[cek@colo12-c703 hl]$ ./statera
+thms: 153312885 tms: 54060128 tys: 167865
+Direct uses: th->th th->tm tm->tm th->ty tm->ty ty->ty:
+135356769 28173607 43019204 31562 136455 82553
+After removing:
+Depends: th->th th->tm tm->tm th->ty tm->ty ty->ty:
+47451593 8057353 12444898 22485 103291 66924
+thms: 47451592 tms: 14264412 tys: 128879
+ with VOLUME_HELPER:
+thms: 153312885 tms: 54060128 tys: 167865
+Direct uses: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+135356767 28173607 43019204 31562 136455 82553
+After removing:
+Depends: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+47152340 7990726 12377430 22485 103291 66924
+thms: 47152339 tms: 14194041 tys: 128879
+ with decision_procedure:
+[cek@colo12-c703 hl]$ ./statera 
+thms: 153142921 tms: 54053281 tys: 167865
+Direct uses: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+135177238 28167275 43012328 31562 136455 82553
+After removing:
+Depends: th->th th->tm tm->tm th->ty tm->ty ty->ty: 
+27298989 4730071 8440859 21679 100166 64539
+thms: 27298988 tms: 9967288 tys: 124665
+
